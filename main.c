@@ -1,289 +1,417 @@
-
-/* Copyright (c) Mark J. Kilgard, 1994. */
-
-/* This program is freely distributable without licensing fees 
-   and is provided without guarantee or warrantee expressed or 
-   implied. This program is -not- in the public domain. */
-
-/**
- * (c) Copyright 1993, Silicon Graphics, Inc.
- * ALL RIGHTS RESERVED 
- * Permission to use, copy, modify, and distribute this software for 
- * any purpose and without fee is hereby granted, provided that the above
- * copyright notice appear in all copies and that both the copyright notice
- * and this permission notice appear in supporting documentation, and that 
- * the name of Silicon Graphics, Inc. not be used in advertising
- * or publicity pertaining to distribution of the software without specific,
- * written prior permission. 
- *
- * THE MATERIAL EMBODIED ON THIS SOFTWARE IS PROVIDED TO YOU "AS-IS"
- * AND WITHOUT WARRANTY OF ANY KIND, EXPRESS, IMPLIED OR OTHERWISE,
- * INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY OR
- * FITNESS FOR A PARTICULAR PURPOSE.  IN NO EVENT SHALL SILICON
- * GRAPHICS, INC.  BE LIABLE TO YOU OR ANYONE ELSE FOR ANY DIRECT,
- * SPECIAL, INCIDENTAL, INDIRECT OR CONSEQUENTIAL DAMAGES OF ANY
- * KIND, OR ANY DAMAGES WHATSOEVER, INCLUDING WITHOUT LIMITATION,
- * LOSS OF PROFIT, LOSS OF USE, SAVINGS OR REVENUE, OR THE CLAIMS OF
- * THIRD PARTIES, WHETHER OR NOT SILICON GRAPHICS, INC.  HAS BEEN
- * ADVISED OF THE POSSIBILITY OF SUCH LOSS, HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, ARISING OUT OF OR IN CONNECTION WITH THE
- * POSSESSION, USE OR PERFORMANCE OF THIS SOFTWARE.
- * 
- * US Government Users Restricted Rights 
- * Use, duplication, or disclosure by the Government is subject to
- * restrictions set forth in FAR 52.227.19(c)(2) or subparagraph
- * (c)(1)(ii) of the Rights in Technical Data and Computer Software
- * clause at DFARS 252.227-7013 and/or in similar or successor
- * clauses in the FAR or the DOD or NASA FAR Supplement.
- * Unpublished-- rights reserved under the copyright laws of the
- * United States.  Contractor/manufacturer is Silicon Graphics,
- * Inc., 2011 N.  Shoreline Blvd., Mountain View, CA 94039-7311.
- *
- * OpenGL(TM) is a trademark of Silicon Graphics, Inc.
- */
-/**
- *  movelight.c
- *  This program demonstrates when to issue lighting and 
- *  transformation commands to render a model with a light 
- *  which is moved by a modeling transformation (rotate or 
- *  translate).  The light position is reset after the modeling 
- *  transformation is called.  The eye position does not change.
- *
- *  A sphere is drawn using a grey material characteristic. 
- *  A single light source illuminates the object.
- *
- *  Interaction:  pressing the left or middle mouse button
- *  alters the modeling transformation (x rotation) by 30 degrees.  
- *  The scene is then redrawn with the light in a new position.
- */
 #include <stdlib.h>
-#include <stdarg.h>
 #include <stdio.h>
+#include <math.h>
+#include <X11/X.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+
+
+#ifdef __APPLE__
+#include <GLUT/glut.h>
+#else
 #include <GL/glut.h>
+#endif
 
-#define TORUS 0
-#define TEAPOT 1
-#define DOD 2
-#define TET 3
-#define ISO 4
-#define QUIT 5
+// angle of rotation for the camera direction
+float angle = 0.0f;
 
-static int spin = 0;
-static int obj = TORUS;
-static int begin;
+// actual vector representing the camera's direction
+float lx=0.0f,lz=-1.0f;
 
-void
-output(GLfloat x, GLfloat y, char *format,...)
-{
-  va_list args;
-  char buffer[200], *p;
+// XZ position of the camera
+float x=0.0f, z=5.0f;
 
-  va_start(args, format);
-  vsprintf(buffer, format, args);
-  va_end(args);
-  glPushMatrix();
-  glTranslatef(x, y, 0);
-  for (p = buffer; *p; p++)
-    glutStrokeCharacter(GLUT_STROKE_ROMAN, *p);
-  glPopMatrix();
+// the key states. These variables will be zero
+//when no key is being presses
+float deltaAngle = 0.0f;
+float deltaMove = 0;
+int xOrigin = -1;
+
+// Constant definitions for Menus
+#define RED 1
+#define GREEN 2
+#define BLUE 3
+#define ORANGE 4
+
+#define FILL 1
+#define LINE 2
+#define FULLSCREEN 1 
+// Pop up menu identifiers
+int fillMenu, fontMenu, mainMenu, colorMenu, Fullscreen;
+
+// color for the nose
+float red = 1.0f, blue=0.5f, green=0.5f;
+
+// scale of snowman
+float scale = 1.0f;
+
+// menu status
+int menuFlag = 0;
+
+// default font
+void *font = GLUT_BITMAP_TIMES_ROMAN_24;
+
+#define INT_GLUT_BITMAP_8_BY_13 1
+#define INT_GLUT_BITMAP_9_BY_15 2
+#define INT_GLUT_BITMAP_TIMES_ROMAN_10  3
+#define INT_GLUT_BITMAP_TIMES_ROMAN_24  4
+#define INT_GLUT_BITMAP_HELVETICA_10  5
+#define INT_GLUT_BITMAP_HELVETICA_12  6
+#define INT_GLUT_BITMAP_HELVETICA_18  7
+
+void changeSize(int w, int h) {
+
+	// Prevent a divide by zero, when window is too short
+	// (you cant make a window of zero width).
+	if (h == 0)
+		h = 1;
+
+	float ratio =  w * 1.0 / h;
+
+	// Use the Projection Matrix
+	glMatrixMode(GL_PROJECTION);
+
+	// Reset Matrix
+	glLoadIdentity();
+
+	// Set the viewport to be the entire window
+	glViewport(0, 0, w, h);
+
+	// Set the correct perspective.
+	gluPerspective(45.0f, ratio, 0.1f, 100.0f);
+
+	// Get Back to the Modelview
+	glMatrixMode(GL_MODELVIEW);
 }
 
-void
-menu_select(int item)
-{
-  if (item == QUIT)
-    exit(0);
-  obj = item;
-  glutPostRedisplay();
-}
-
-/* ARGSUSED2 */
-void
-movelight(int button, int state, int x, int y)
-{
-  if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
-    begin = x;
+void renderBitmapString(
+		float x,
+		float y,
+		float z,
+		void *font,
+		char *string) {
+  char *c;
+  glRasterPos3f(x, y,z);
+  for (c=string; *c != '\0'; c++) {
+    glutBitmapCharacter(font, *c);
   }
 }
 
-/* ARGSUSED1 */
-void
-motion(int x, int y)
-{
-  spin = (spin + (x - begin)) % 360;
-  begin = x;
-  glutPostRedisplay();
+void computePos(float deltaMove) {
+
+	x += deltaMove * lx * 0.1f;
+	z += deltaMove * lz * 0.1f;
 }
 
-void
-myinit(void)
-{
-  glEnable(GL_LIGHTING);
-  glEnable(GL_LIGHT0);
-
-  glDepthFunc(GL_LESS);
-  glEnable(GL_DEPTH_TEST);
+void lighting(void){
+    	glEnable (GL_DEPTH_TEST);
+        glEnable (GL_LIGHTING);
+	glEnable (GL_LIGHT0);
+	glEnable(GL_COLOR_MATERIAL);
 }
 
-/*  Here is where the light position is reset after the modeling
- *  transformation (glRotated) is called.  This places the 
- *  light at a new position in world coordinates.  The cube
- *  represents the position of the light.
- */
-void
-display(void)
-{
-  GLfloat position[] =
-  {0.0, 0.0, 1.5, 1.0};
+void drawSnowMan() {
 
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  glMatrixMode(GL_MODELVIEW);
-  glPushMatrix();
-  glTranslatef(0.0, 0.0, -5.0);
+	glScalef(scale, scale, scale);
+	glColor3f(1.0f, 1.0f, 1.0f);
 
-  glPushMatrix();
-  glRotated((GLdouble) spin, 0.0, 1.0, 0.0);
-  glRotated(0.0, 1.0, 0.0, 0.0);
-  glLightfv(GL_LIGHT0, GL_POSITION, position);
+// Draw Body
+	glTranslatef(0.0f ,0.75f, 0.0f);
+	glutSolidSphere(0.75f,20,20);
 
-  glTranslated(0.0, 0.0, 1.5);
-  glDisable(GL_LIGHTING);
-  glColor3f(0.0, 1.0, 1.0);
-  glutWireCube(0.1);
-  glEnable(GL_LIGHTING);
-  glPopMatrix();
+// Draw Head
+	glTranslatef(0.0f, 1.0f, 0.0f);
+	glutSolidSphere(0.25f,20,20);
 
-  switch (obj) {
-  case TORUS:
-    glutSolidTorus(0.275, 0.85, 20, 20);
-    break;
-  case TEAPOT:
-    glutSolidTeapot(1.0);
-    break;
-  case DOD:
-    glPushMatrix();
-    glScalef(.5, .5, .5);
-    glutSolidDodecahedron();
-    glPopMatrix();
-    break;
-  case TET:
-    glutSolidTetrahedron();
-    break;
-  case ISO:
-    glutSolidIcosahedron();
-    break;
-  }
+// Draw Eyes
+	glPushMatrix();
+	glColor3f(0.0f,0.0f,0.0f);
+	glTranslatef(0.05f, 0.10f, 0.18f);
+	glutSolidSphere(0.05f,10,10);
+	glTranslatef(-0.1f, 0.0f, 0.0f);
+	glutSolidSphere(0.05f,10,10);
+	glPopMatrix();
 
-  glPopMatrix();
-  glPushAttrib(GL_ENABLE_BIT);
-  glDisable(GL_DEPTH_TEST);
-  glDisable(GL_LIGHTING);
-  glMatrixMode(GL_PROJECTION);
-  glPushMatrix();
-  glLoadIdentity();
-  gluOrtho2D(0, 3000, 0, 3000);
-  glMatrixMode(GL_MODELVIEW);
-  glPushMatrix();
-  glLoadIdentity();
-  output(80, 2800, "Welcome to movelight.");
-  output(80, 2650, "Right mouse button for menu.");
-  output(80, 400, "Hold down the left mouse button");
-  output(80, 250, "and move the mouse horizontally");
-  output(80, 100, "to change the light position.");
-  glPopMatrix();
-  glMatrixMode(GL_PROJECTION);
-  glPopMatrix();
-  glPopAttrib();
-  glutSwapBuffers();
+// Draw Nose
+	glColor3f(red, green, blue);
+	glRotatef(0.0f,1.0f, 0.0f, 0.0f);
+	glutSolidCone(0.08f,0.5f,10,2);
+
+	glColor3f(0.5f, 1.0f, 0.0f);
 }
 
-void
-myReshape(int w, int h)
-{
-  glViewport(0, 0, w, h);
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-  gluPerspective(40.0, (GLfloat) w / (GLfloat) h, 1.0, 20.0);
-  glMatrixMode(GL_MODELVIEW);
+void renderScene(void) {
+
+	if (deltaMove)
+		computePos(deltaMove);
+
+	// Clear Color and Depth Buffers
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	// Reset transformations
+	glLoadIdentity();
+	// Set the camera
+	gluLookAt(	x, 1.0f, z,
+			x+lx, 1.0f,  z+lz,
+			0.0f, 1.0f,  0.0f);
+
+
+// Draw ground
+
+	glColor3f(1.0f, 0.5f, 0.5f);
+	glBegin(GL_QUADS);
+		glVertex3f(-2.0f, 0.2f, -2.0f);
+		glVertex3f(-2.0f, 0.2f,  2.0f);
+		glVertex3f( 2.0f, 0.2f,  2.0f);
+		glVertex3f( 2.0f, 0.2f, -2.0f);
+	glEnd();
+	for(int i = -3; i < 3; i++)
+		for(int j=-3; j < 3; j++) {
+			glPushMatrix();
+			glTranslatef(i*10.0f, 0.0f, j * 10.0f);
+			drawSnowMan();
+			glPopMatrix();
+		}
+		glutSolidCube(2);
+	glutSwapBuffers();
+
+// Draw cube
+
 }
 
-void
-tmotion(int x, int y)
-{
-  printf("Tablet motion x = %d, y = %d\n", x, y);
+// -----------------------------------
+//             KEYBOARD
+// -----------------------------------
+
+void processNormalKeys(unsigned char key, int xx, int yy) {
+
+	switch (key) {
+		case 27:
+			glutDestroyMenu(mainMenu);
+			glutDestroyMenu(fillMenu);
+			glutDestroyMenu(colorMenu);
+			glutDestroyMenu(fontMenu);
+			glutDestroyMenu(Fullscreen);
+			exit(0);
+			break;
+	}
 }
 
-void
-tbutton(int b, int s, int x, int y)
-{
-  printf("b = %d, s = %d, x = %d, y = %d\n", b, s, x, y);
+void pressKey(int key, int xx, int yy) {
+
+	switch (key) {
+		case GLUT_KEY_UP : deltaMove = 0.5f; break;
+		case GLUT_KEY_DOWN : deltaMove = -0.5f; break;
+	}
 }
 
-void
-smotion(int x, int y, int z)
-{
-  fprintf(stderr, "Spaceball motion %d %d %d\n", x, y, z);
+void releaseKey(int key, int x, int y) {
+
+	switch (key) {
+		case GLUT_KEY_UP :
+		case GLUT_KEY_DOWN : deltaMove = 0;break;
+	}
 }
 
-void
-rmotion(int x, int y, int z)
-{
-  fprintf(stderr, "Spaceball rotate %d %d %d\n", x, y, z);
+// -----------------------------------
+//             MOUSE
+// -----------------------------------
+
+	void mouseMove(int x, int y) {
+
+
+	// this will only be true when the left button is down
+	if (xOrigin >= 0) {
+
+		// update deltaAngle
+		deltaAngle = (x - xOrigin) * 0.001f;
+
+		// update camera's direction
+		lx = sin(angle + deltaAngle);
+		lz = -cos(angle + deltaAngle);
+	}
 }
 
-void
-sbutton(int button, int state)
-{
-  fprintf(stderr, "Spaceball button %d is %s\n",
-    button, state == GLUT_UP ? "up" : "down");
+void mouseButton(int button, int state, int x, int y) {
+
+	// only start motion if the left button is pressed
+	if (button == GLUT_LEFT_BUTTON) {
+
+		// when the button is released
+		if (state == GLUT_UP) {
+			angle += deltaAngle;
+			xOrigin = -1;
+		}
+		else  {// state = GLUT_DOWN
+			xOrigin = x;
+		}
+	}
 }
 
-void
-dials(int dial, int value)
-{
-  fprintf(stderr, "Dial %d is %d\n", dial, value);
-  spin = value % 360;
-  glutPostRedisplay();
+// -----------------------------------
+//             MENUS
+// -----------------------------------
+
+void processMenuStatus(int status, int x, int y) {
+
+	if (status == GLUT_MENU_IN_USE)
+		menuFlag = 1;
+	else
+		menuFlag = 0;
 }
 
-void
-buttons(int button, int state)
-{
-  fprintf(stderr, "Button %d is %s\n", button,
-    state == GLUT_UP ? "up" : "down");
+void processMainMenu(int option) {}
+void processFillMenu(int option) {
+
+	switch (option) {
+
+		case FILL: glPolygonMode(GL_FRONT, GL_FILL); break;
+		case LINE: glPolygonMode(GL_FRONT, GL_LINE); break;
+	}
 }
 
-/*  Main Loop
- *  Open window with initial window size, title bar, 
- *  RGBA display mode, and handle input events.
- */
-int
-main(int argc, char **argv)
-{
-  glutInit(&argc, argv);
-  glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
-  glutInitWindowSize(500, 500);
-  glutCreateWindow(argv[0]);
-  myinit();
-  glutMouseFunc(movelight);
-  glutMotionFunc(motion);
-  glutReshapeFunc(myReshape);
-  glutDisplayFunc(display);
-  glutTabletMotionFunc(tmotion);
-  glutTabletButtonFunc(tbutton);
-  glutSpaceballMotionFunc(smotion);
-  glutSpaceballRotateFunc(rmotion);
-  glutSpaceballButtonFunc(sbutton);
-  glutDialsFunc(dials);
-  glutButtonBoxFunc(buttons);
-  glutCreateMenu(menu_select);
-  glutAddMenuEntry("Torus", TORUS);
-  glutAddMenuEntry("Teapot", TEAPOT);
-  glutAddMenuEntry("Dodecahedron", DOD);
-  glutAddMenuEntry("Tetrahedron", TET);
-  glutAddMenuEntry("Icosahedron", ISO);
-  glutAddMenuEntry("Quit", QUIT);
-  glutAttachMenu(GLUT_RIGHT_BUTTON);
-  glutMainLoop();
-  return 0;             /* ANSI C requires main to return int. */
+void processFullscreen(int option) {
+	switch (option) {
+		case FULLSCREEN:
+			glutFullScreen();
+			break;
+	}
+}
+
+void processFontMenu(int option) {
+
+	switch (option) {
+		case INT_GLUT_BITMAP_8_BY_13:
+			font = GLUT_BITMAP_8_BY_13;
+			break;
+		case INT_GLUT_BITMAP_9_BY_15:
+			font = GLUT_BITMAP_9_BY_15;
+			break;
+		case INT_GLUT_BITMAP_TIMES_ROMAN_10:
+			font = GLUT_BITMAP_TIMES_ROMAN_10;
+			break;
+		case INT_GLUT_BITMAP_TIMES_ROMAN_24:
+			font = GLUT_BITMAP_TIMES_ROMAN_24;
+			break;
+		case INT_GLUT_BITMAP_HELVETICA_10:
+			font = GLUT_BITMAP_HELVETICA_10;
+			break;
+		case INT_GLUT_BITMAP_HELVETICA_12:
+			font = GLUT_BITMAP_HELVETICA_12;
+			break;
+		case INT_GLUT_BITMAP_HELVETICA_18:
+			font = GLUT_BITMAP_HELVETICA_18;
+			break;
+	}
+}
+
+void processColorMenu(int option) {
+
+	switch (option) {
+		case RED :
+			red = 1.0f;
+			green = 0.0f;
+			blue = 0.0f; break;
+		case GREEN :
+			red = 0.0f;
+			green = 1.0f;
+			blue = 0.0f; break;
+		case BLUE :
+			red = 0.0f;
+			green = 0.0f;
+			blue = 1.0f; break;
+		case ORANGE :
+			red = 1.0f;
+			green = 0.5f;
+			blue = 0.5f; break;
+	}
+}
+
+void createPopupMenus() {
+
+	fontMenu = glutCreateMenu(processFontMenu);
+
+	glutAddMenuEntry("BITMAP_8_BY_13 ",INT_GLUT_BITMAP_8_BY_13 );
+	glutAddMenuEntry("BITMAP_9_BY_15",INT_GLUT_BITMAP_9_BY_15 );
+	glutAddMenuEntry("BITMAP_TIMES_ROMAN_10 ",INT_GLUT_BITMAP_TIMES_ROMAN_10  );
+	glutAddMenuEntry("BITMAP_TIMES_ROMAN_24",INT_GLUT_BITMAP_TIMES_ROMAN_24  );
+	glutAddMenuEntry("BITMAP_HELVETICA_10 ",INT_GLUT_BITMAP_HELVETICA_10  );
+	glutAddMenuEntry("BITMAP_HELVETICA_12",INT_GLUT_BITMAP_HELVETICA_12  );
+	glutAddMenuEntry("BITMAP_HELVETICA_18",INT_GLUT_BITMAP_HELVETICA_18  );
+
+	fillMenu = glutCreateMenu(processFillMenu);
+
+	glutAddMenuEntry("Fill",FILL);
+	glutAddMenuEntry("Line",LINE);
+
+	colorMenu = glutCreateMenu(processColorMenu);
+	glutAddMenuEntry("Red",RED);
+	glutAddMenuEntry("Blue",BLUE);
+	glutAddMenuEntry("Green",GREEN);
+	glutAddMenuEntry("Orange",ORANGE);
+	
+	Fullscreen = glutCreateMenu(processFullscreen);
+	glutAddMenuEntry("Fullscreen", FULLSCREEN);
+
+	mainMenu = glutCreateMenu(processMainMenu);
+
+	glutAddSubMenu("Polygon Mode", fillMenu);
+	glutAddSubMenu("Color", colorMenu);
+	glutAddSubMenu("Font", fontMenu);
+	glutAddSubMenu("Window", Fullscreen);
+	// attach the menu to the right button
+	glutAttachMenu(GLUT_RIGHT_BUTTON);
+
+	// this will allow us to know if the menu is active
+	glutMenuStatusFunc(processMenuStatus);
+}
+
+// -----------------------------------
+//             MAIN
+// -----------------------------------
+
+int main(int argc, char **argv) {
+
+	// init GLUT and create window
+	glutInit(&argc, argv);
+	glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGBA);
+	glutInitWindowPosition(100,100);
+	glutInitWindowSize(320,320);
+	glutCreateWindow("Lighthouse3D - GLUT Tutorial");
+	lighting();
+	// register callbacks
+	glutDisplayFunc(renderScene);
+	glutReshapeFunc(changeSize);
+	glutIdleFunc(renderScene);
+
+	glutIgnoreKeyRepeat(1);
+	glutKeyboardFunc(processNormalKeys);
+	glutSpecialFunc(pressKey);
+	glutSpecialUpFunc(releaseKey);
+	glutSetCursor(GLUT_CURSOR_NONE);
+
+	Display *dpy;
+	Window root_window;
+
+	dpy = XOpenDisplay(0);
+	root_window = XRootWindow(dpy, 0);
+	XSelectInput(dpy, root_window, KeyReleaseMask);
+	XWarpPointer(dpy, None, root_window, 0, 0, 0, 0, 100, 100);
+	
+
+	// here are the two new functions
+	glutMouseFunc(mouseButton);
+	glutMotionFunc(mouseMove);
+
+	// OpenGL init
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+
+	// init Menus
+	createPopupMenus();
+
+	// enter GLUT event processing cycle
+	glutMainLoop();
+
+	return 1;
 }
