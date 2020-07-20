@@ -1,11 +1,15 @@
+#include <GL/freeglut_std.h>
+#include <GL/gl.h>
+#include <SDL/SDL_mouse.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 #include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-
-
+#include <SDL/SDL.h>
+#include <png.h>
+#include "lodepng.h"
 #ifdef __APPLE__
 #include <GLUT/glut.h>
 #else
@@ -25,8 +29,13 @@ float x=0.0f, z=5.0f;
 //when no key is being presses
 float deltaAngle = 0.0f;
 float deltaMove = 0;
+float deltaMove2 = 0;
+float activeKeys = 0;
 int xOrigin = -1;
-
+// Mouse warp
+int lastX = 150;
+int lastY = 150;
+int curX, curY;
 // Constant definitions for Menus
 #define RED 1
 #define GREEN 2
@@ -42,11 +51,19 @@ int fillMenu, fontMenu, mainMenu, colorMenu, Fullscreen;
 // color for the nose
 float red = 1.0f, blue=0.5f, green=0.5f;
 
+// texture IDS
+int texID[3];
+
 // scale of snowman
 float scale = 1.0f;
 
-// menu status
+// Menu status
 int menuFlag = 0;
+
+// variables to compute frames per second
+int frame;
+long timeget, timebase;
+char s[50];
 
 // default font
 void *font = GLUT_BITMAP_TIMES_ROMAN_24;
@@ -58,6 +75,27 @@ void *font = GLUT_BITMAP_TIMES_ROMAN_24;
 #define INT_GLUT_BITMAP_HELVETICA_10  5
 #define INT_GLUT_BITMAP_HELVETICA_12  6
 #define INT_GLUT_BITMAP_HELVETICA_18  7
+
+GLuint texture;
+
+void loadTexture() {
+	int argc;
+	char const *argv[0]; 
+	glGenTextures(1, &texture);
+	glBindTexture(GL_QUADS, texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	unsigned int error;
+	unsigned char *image;
+	unsigned int width, height;
+	const char *filename = argc > 1 ? argv[1] : "cu.png";
+	error = lodepng_decode32_file(&image, &width, &height, filename);
+	if (error) 
+		printf("ERROR %u: %s\n", error, lodepng_error_text(error));
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+		free(image);
+}
 
 void changeSize(int w, int h) {
 
@@ -96,54 +134,39 @@ void renderBitmapString(
     glutBitmapCharacter(font, *c);
   }
 }
+void computePos2() {
+	x += deltaMove2 * lz * 0.1f;
+	z += deltaMove2 * (-lx) * 0.1f;
+}
 
-void computePos(float deltaMove) {
-
-	x += deltaMove * lx * 0.1f;
+void computePos() {
+	x += deltaMove * lx *0.1f;
 	z += deltaMove * lz * 0.1f;
 }
 
 void lighting(void){
-    	glEnable (GL_DEPTH_TEST);
+ 	glutSetColor( 1, 0.1 ,0.1, 0.1);
+	glEnable (GL_DEPTH_TEST);
         glEnable (GL_LIGHTING);
 	glEnable (GL_LIGHT0);
 	glEnable(GL_COLOR_MATERIAL);
+	glEnable(GL_BLEND);
+
 }
 
 void drawSnowMan() {
-
 	glScalef(scale, scale, scale);
 	glColor3f(1.0f, 1.0f, 1.0f);
-
-// Draw Body
-	glTranslatef(0.0f ,0.75f, 0.0f);
-	glutSolidSphere(0.75f,20,20);
-
-// Draw Head
-	glTranslatef(0.0f, 1.0f, 0.0f);
-	glutSolidSphere(0.25f,20,20);
-
-// Draw Eyes
-	glPushMatrix();
-	glColor3f(0.0f,0.0f,0.0f);
-	glTranslatef(0.05f, 0.10f, 0.18f);
-	glutSolidSphere(0.05f,10,10);
-	glTranslatef(-0.1f, 0.0f, 0.0f);
-	glutSolidSphere(0.05f,10,10);
-	glPopMatrix();
-
-// Draw Nose
-	glColor3f(red, green, blue);
-	glRotatef(0.0f,1.0f, 0.0f, 0.0f);
-	glutSolidCone(0.08f,0.5f,10,2);
-
-	glColor3f(0.5f, 1.0f, 0.0f);
 }
+
 
 void renderScene(void) {
 
-	if (deltaMove)
-		computePos(deltaMove);
+	if (deltaMove) 
+		computePos();
+
+	if (deltaMove2)
+		computePos2();
 
 	// Clear Color and Depth Buffers
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -151,40 +174,88 @@ void renderScene(void) {
 	// Reset transformations
 	glLoadIdentity();
 	// Set the camera
+	glClear(GL_COLOR_BUFFER_BIT);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL);
 	gluLookAt(	x, 1.0f, z,
 			x+lx, 1.0f,  z+lz,
 			0.0f, 1.0f,  0.0f);
-
+	
 
 // Draw ground
-
-	glColor3f(1.0f, 0.5f, 0.5f);
+	loadTexture();
+	glEnable(GL_TEXTURE_2D);
 	glBegin(GL_QUADS);
-		glVertex3f(-2.0f, 0.2f, -2.0f);
-		glVertex3f(-2.0f, 0.2f,  2.0f);
-		glVertex3f( 2.0f, 0.2f,  2.0f);
-		glVertex3f( 2.0f, 0.2f, -2.0f);
+		glTexCoord3f(0, 0 ,0); glVertex3f(-2.0f, 0.2f, -2.0f);
+		glTexCoord3f(1, 0 ,0); glVertex3f(-2.0f, 0.2f,  2.0f);
+		glTexCoord3f(1 ,1, 1); glVertex3f( 2.0f, 0.2f,  2.0f);
+		glTexCoord3f(0, 1, 0); glVertex3f( 2.0f, 0.2f, -2.0f);
 	glEnd();
-	for(int i = -3; i < 3; i++)
+		for(int i = -3; i < 3; i++) 
 		for(int j=-3; j < 3; j++) {
 			glPushMatrix();
 			glTranslatef(i*10.0f, 0.0f, j * 10.0f);
 			drawSnowMan();
 			glPopMatrix();
 		}
-		glutSolidCube(2);
+	glBegin(GL_POLYGON);
+glTexCoord3f(0, 0, 0); glVertex3f(  0.5, -0.5, 0.5 );
+glTexCoord3f(0, 1, 0); glVertex3f(  0.5,  0.5, 0.5 );
+glTexCoord3f(1, 1, 1); glVertex3f( -0.5,  0.5, 0.5 );
+glTexCoord3f(0, 1, 0); glVertex3f( -0.5, -0.5, 0.5 );
+glEnd();
+
+// Lado roxo - DIREITA
+glBegin(GL_POLYGON);
+glTexCoord3f(1, 0, 0);
+glVertex3f( 0.5, -0.5, -0.5 );
+glVertex3f( 0.5,  0.5, -0.5 );
+glVertex3f( 0.5,  0.5,  0.5 );
+glVertex3f( 0.5, -0.5,  0.5 );
+glEnd();
+
+// Lado verde - ESQUERDA
+glBegin(GL_POLYGON);
+glTexCoord3f(1, 1, 1);
+glVertex3f( -0.5, -0.5,  0.5 );
+glVertex3f( -0.5,  0.5,  0.5 );
+glVertex3f( -0.5,  0.5, -0.5 );
+glVertex3f( -0.5, -0.5, -0.5 );
+glEnd();
+
+// Lado azul - TOPO
+glBegin(GL_POLYGON);
+glTexCoord3f(0, 1, 0);
+glVertex3f(  0.5,  0.5,  0.5 );
+glVertex3f(  0.5,  0.5, -0.5 );
+glVertex3f( -0.5,  0.5, -0.5 );
+glVertex3f( -0.5,  0.5,  0.5 );
+glEnd();
+
+// Lado vermelho - BASE
+glBegin(GL_POLYGON);
+glTexCoord3f(1, 1, 0);
+glVertex3f(  0.5, -0.5, -0.5 );
+glVertex3f(  0.5, -0.5,  0.5 );
+glVertex3f( -0.5, -0.5,  0.5 );
+glVertex3f( -0.5, -0.5, -0.5 );
+glEnd();
+	glDisable(GL_TEXTURE_2D);
 	glutSwapBuffers();
+	frame++;
+	timeget=glutGet(GLUT_ELAPSED_TIME);
+	printf("FPS:%4.2f\n", frame*1000.0/(timeget-timebase));
+	timebase = timeget;
+	frame = 0;
+    
+} 
 
-// Draw cube
 
-}
 
 // -----------------------------------
 //             KEYBOARD
 // -----------------------------------
 
 void processNormalKeys(unsigned char key, int xx, int yy) {
-
 	switch (key) {
 		case 27:
 			glutDestroyMenu(mainMenu);
@@ -194,49 +265,82 @@ void processNormalKeys(unsigned char key, int xx, int yy) {
 			glutDestroyMenu(Fullscreen);
 			exit(0);
 			break;
+		case 119:deltaMove = 0.5f; break;
+		case 115:deltaMove = -0.5f; break;
+		case 97:deltaMove2 = 0.5; break;
+		case 100 : deltaMove2 = -0.5; break;
 	}
 }
 
-void pressKey(int key, int xx, int yy) {
-
+void pressKey(int key, int xx, int yy) { 
 	switch (key) {
-		case GLUT_KEY_UP : deltaMove = 0.5f; break;
-		case GLUT_KEY_DOWN : deltaMove = -0.5f; break;
+		case GLUT_KEY_DOWN: deltaMove = -0.5f; activeKeys += 1; break;
+		case GLUT_KEY_LEFT : deltaMove2 = 0.5f; break;
+		case GLUT_KEY_RIGHT : deltaMove2 = -0.5f;break;
 	}
 }
 
 void releaseKey(int key, int x, int y) {
 
 	switch (key) {
-		case GLUT_KEY_UP :
-		case GLUT_KEY_DOWN : deltaMove = 0;break;
+		case GLUT_KEY_UP :  
+		case GLUT_KEY_DOWN : deltaMove = 0; activeKeys += -1;break;
+		case GLUT_KEY_LEFT :
+		case GLUT_KEY_RIGHT : deltaMove2 = 0;break;
 	}
 }
-
+void releaseNormalKeys(unsigned char key, int x, int y) {
+	switch (key) {
+		case 119 : 
+		case 115 : deltaMove = 0;break;
+		case 97 : 
+		case 100 : deltaMove2 = 0;break;
+	}
+}
 // -----------------------------------
 //             MOUSE
 // -----------------------------------
 
-	void mouseMove(int x, int y) {
+void mouseMove(int x, int y) {
 
+	// update deltaAngle
+	deltaAngle = (x - xOrigin) * 0.001f;
 
-	// this will only be true when the left button is down
-	if (xOrigin >= 0) {
+	// update camera's direction
+	lx = sin(angle + deltaAngle);
+	lz = -cos(angle + deltaAngle);
+	int deltaX = x - lastX;
+        int deltaY = y - lastY;
 
-		// update deltaAngle
-		deltaAngle = (x - xOrigin) * 0.001f;
+        lastX = x;
+        lastY = y;
 
-		// update camera's direction
-		lx = sin(angle + deltaAngle);
-		lz = -cos(angle + deltaAngle);
-	}
+        if( deltaX == 0 && deltaY == 0 ) return;
+
+	int windowX     = glutGet( GLUT_WINDOW_X );
+	int windowY     = glutGet( GLUT_WINDOW_Y );
+	int screenWidth     = glutGet( GLUT_SCREEN_WIDTH );
+	int screenHeight    = glutGet( GLUT_SCREEN_HEIGHT );
+
+	int screenLeft = -windowX;
+	int screenTop = -windowY;
+	int screenRight = screenWidth - windowX;
+	int screenBottom = screenHeight - windowY;
+
+	if( x <= screenLeft+10 || (y) <= screenTop+10 || x >= screenRight-10 || y >= screenBottom - 10) {
+        	lastX = 150;
+        	lastY = 150;
+		angle += deltaAngle;
+		xOrigin = -1;
+        	glutWarpPointer( lastX, lastY );
+        }
+    	curX += deltaX;
+   	curY -= deltaY;
 }
 
 void mouseButton(int button, int state, int x, int y) {
 
-	// only start motion if the left button is pressed
 	if (button == GLUT_LEFT_BUTTON) {
-
 		// when the button is released
 		if (state == GLUT_UP) {
 			angle += deltaAngle;
@@ -244,10 +348,11 @@ void mouseButton(int button, int state, int x, int y) {
 		}
 		else  {// state = GLUT_DOWN
 			xOrigin = x;
-		}
 	}
 }
 
+
+}
 // -----------------------------------
 //             MENUS
 // -----------------------------------
@@ -279,7 +384,6 @@ void processFullscreen(int option) {
 }
 
 void processFontMenu(int option) {
-
 	switch (option) {
 		case INT_GLUT_BITMAP_8_BY_13:
 			font = GLUT_BITMAP_8_BY_13;
@@ -299,7 +403,7 @@ void processFontMenu(int option) {
 		case INT_GLUT_BITMAP_HELVETICA_12:
 			font = GLUT_BITMAP_HELVETICA_12;
 			break;
-		case INT_GLUT_BITMAP_HELVETICA_18:
+	 	case INT_GLUT_BITMAP_HELVETICA_18:
 			font = GLUT_BITMAP_HELVETICA_18;
 			break;
 	}
@@ -325,7 +429,8 @@ void processColorMenu(int option) {
 			green = 0.5f;
 			blue = 0.5f; break;
 	}
-}
+}	
+
 
 void createPopupMenus() {
 
@@ -374,44 +479,35 @@ int main(int argc, char **argv) {
 
 	// init GLUT and create window
 	glutInit(&argc, argv);
-	glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGBA);
+	glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGBA | GLUT_MULTISAMPLE );
 	glutInitWindowPosition(100,100);
 	glutInitWindowSize(320,320);
 	glutCreateWindow("Lighthouse3D - GLUT Tutorial");
+	glutSetColor(GLUT_BLUE, 0.2, 0.2, 0.8);
 	lighting();
+
 	// register callbacks
 	glutDisplayFunc(renderScene);
 	glutReshapeFunc(changeSize);
 	glutIdleFunc(renderScene);
-
 	glutIgnoreKeyRepeat(1);
 	glutKeyboardFunc(processNormalKeys);
 	glutSpecialFunc(pressKey);
 	glutSpecialUpFunc(releaseKey);
-	glutSetCursor(GLUT_CURSOR_NONE);
-
-	Display *dpy;
-	Window root_window;
-
-	dpy = XOpenDisplay(0);
-	root_window = XRootWindow(dpy, 0);
-	XSelectInput(dpy, root_window, KeyReleaseMask);
-	XWarpPointer(dpy, None, root_window, 0, 0, 0, 0, 100, 100);
-	
-
+	glutKeyboardUpFunc(releaseNormalKeys);
+	glutSetCursor(GLUT_CURSOR_CROSSHAIR);
 	// here are the two new functions
 	glutMouseFunc(mouseButton);
 	glutMotionFunc(mouseMove);
-
+	
 	// OpenGL init
 	glEnable(GL_DEPTH_TEST);
-	glEnable(GL_CULL_FACE);
+	glEnable(GL_CULL_FACE); 
 
 	// init Menus
 	createPopupMenus();
 
 	// enter GLUT event processing cycle
 	glutMainLoop();
-
 	return 1;
 }
